@@ -1,0 +1,4 @@
+bcipy==1.4.2
+matplotlib==2.1.1
+numpy==1.16.2
+seaborn==0.9.0
