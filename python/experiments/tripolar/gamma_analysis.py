@@ -21,7 +21,9 @@ FILTER_HP = 2
 FILTER_LP = 80
 FILTER_ORDER = 2
 
-GAMMA_RANGE = [35, 70]
+# pre-stim / post-stim gamma. target / nontarget. Each individual. 
+
+GAMMA_RANGE = [50, 80]
 
 TRIAL_LENGTH = 100
 
@@ -112,8 +114,12 @@ def filter_data(raw_data, fs, downsample_rate, notch_filter_freqency):
         for futher processing.
     Return: Filtered data & sampling rate
     """
-    notch_filterted_data = notch.notch_filter(
+    notch_filterted_data_60 = notch.notch_filter(
         raw_data, fs, notch_filter_freqency)
+    notch_filterted_data_80 = notch.notch_filter(
+        notch_filterted_data_60, fs, 180)
+    notch_filterted_data = notch.notch_filter(
+        notch_filterted_data_80, fs, 240)
     bandpass_filtered_data = bandpass.butter_bandpass_filter(
         notch_filterted_data, FILTER_HP, FILTER_LP, fs, order=FILTER_ORDER)
     filtered_data = downsample.downsample(
