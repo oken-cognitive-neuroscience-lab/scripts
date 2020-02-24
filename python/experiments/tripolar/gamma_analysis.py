@@ -15,10 +15,10 @@ from bcipy.signal.process.decomposition.psd import (
     power_spectral_density, PSD_TYPE)
 
 # defaults and constants
-DOWNSAMPLE_RATE = 3
+DOWNSAMPLE_RATE = 2
 NOTCH_FREQ = 60
 FILTER_HP = 2
-FILTER_LP = 100
+FILTER_LP = 80
 FILTER_ORDER = 2
 
 GAMMA_RANGE = [35, 70]
@@ -115,7 +115,7 @@ def filter_data(raw_data, fs, downsample_rate, notch_filter_freqency):
     notch_filterted_data = notch.notch_filter(
         raw_data, fs, notch_filter_freqency)
     bandpass_filtered_data = bandpass.butter_bandpass_filter(
-        notch_filterted_data, FILTER_HP, FILTER_LP, fs, order=2)
+        notch_filterted_data, FILTER_HP, FILTER_LP, fs, order=FILTER_ORDER)
     filtered_data = downsample.downsample(
         bandpass_filtered_data, factor=downsample_rate)
     sampling_rate_post_filter = fs / downsample_rate
@@ -148,7 +148,7 @@ def parse(
     # the named arg channel_map. It is a list [0, 1, 0, 1], where 1 is
     # a channel to keep and 0 is to remove. Must be the same length as 
     # channels.
-    trials, labels, num_seq, _ = trial_reshaper(
+    trials, labels, _, _ = trial_reshaper(
         targetness,
         triggers,
         data,
@@ -200,9 +200,6 @@ def separate_trials(data, labels):
     Given data [np.array] and labels [0, 1], we want to separate 0, 1 trials and return the data.
     """
     pass
-
-
-
 
 if __name__ == '__main__':
     import argparse
