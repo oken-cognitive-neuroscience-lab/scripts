@@ -17,13 +17,14 @@ from bcipy.signal.process.decomposition.psd import (
 # defaults and constants
 DOWNSAMPLE_RATE = 2
 NOTCH_FREQ = 60
-FILTER_HP = 2
-FILTER_LP = 80
-FILTER_ORDER = 2
+FILTER_HP = 5
+FILTER_LP = 90
+FILTER_ORDER = 8
 
-# pre-stim / post-stim gamma. target / nontarget. Each individual. 
+# pre-stim / post-stim gamma. target / nontarget. Each individual. r
 
 GAMMA_RANGE = [50, 80]
+# EXPORT_CHANNELS = [13, 14, 15, 16]
 
 TRIAL_LENGTH = 100
 
@@ -37,21 +38,19 @@ def calculate_gamma_dwt():
     return
 
 
-def calculate_fft(data, fs, trial_length, relative=False):
+def calculate_fft(data, fs, trial_length, relative=True):
     """Calculate FFT Gamma
 
     Calculate the amount of gamma using FFT.
     """
-    psd = power_spectral_density(
+    return power_spectral_density(
                 data,
                 GAMMA_RANGE,
                 sampling_rate=fs,
                 window_length=trial_length,
                 method=PSD_TYPE.WELCH,
-                plot=True,
+                plot=False,
                 relative=relative)
-
-    return psd
 
 
 def get_experiment_data(raw_data_path, parameters_path, apply_filters=False):
@@ -82,9 +81,9 @@ def get_triggers(trigger_path, poststim, prestim=False):
     # prestim must be a positive number. Transform the trigger timing if
     #   a prestimulus amount is wanted. Factor that into the trial length for
     #   later reshaping
-    if prestim:
+    if prestim and abs(prestim) > 0:
         trigger_timing = transform_trigger_timing(trigger_timing, prestim)
-        trial_length = poststim + prestim
+        trial_length = poststim + abs(prestim)
     else:
         trial_length = poststim
 
@@ -114,12 +113,8 @@ def filter_data(raw_data, fs, downsample_rate, notch_filter_freqency):
         for futher processing.
     Return: Filtered data & sampling rate
     """
-    notch_filterted_data_60 = notch.notch_filter(
-        raw_data, fs, notch_filter_freqency)
-    notch_filterted_data_80 = notch.notch_filter(
-        notch_filterted_data_60, fs, 180)
     notch_filterted_data = notch.notch_filter(
-        notch_filterted_data_80, fs, 240)
+        raw_data, fs, notch_filter_freqency)
     bandpass_filtered_data = bandpass.butter_bandpass_filter(
         notch_filterted_data, FILTER_HP, FILTER_LP, fs, order=FILTER_ORDER)
     filtered_data = downsample.downsample(
@@ -168,11 +163,12 @@ def parse(
     return trials, labels
 
 
-def export_data_to_csv(exports):
+def export_data_to_csv(exports, intervals, targetness):
     """Export Data to CSV.
     
     Given an array of exports and column names, write a csv for processing in other systems
     """
+    interval_len = len(intervals)
     CSV_EXPORT_NAME = 'tripolar_analysis.csv'
     with open(CSV_EXPORT_NAME, 'w') as tripolar_export:
         writer = csv.writer(
@@ -181,24 +177,25 @@ def export_data_to_csv(exports):
             quotechar='"',
             quoting=csv.QUOTE_MINIMAL)
 
-        # # write headers
-        # writer.writerow(
-        #     ['',
-        #      'prestim_1_all',
-        #      'prestim_1_all',
-        #      'prestim_2_all',
-        #      f'Quantiles {QUANTILES}'])
+        headers = ['']
 
-        # # write PSD data
-        # for name, _ in PSD_TO_DETERMINE:
+        for interval in intervals:
+            first = f'neg{abs(interval[0])}' if interval[0] < 0 else interval[0]
+            second = f'neg{abs(interval[1])}' if interval[1] < 0 else interval[1]
+            headers.append(f'interval_{first}_{second}')
+        # write headers
+        writer.writerow(headers)
 
-        #     writer.writerow(
-        #         [name,
-        #          exports[name]['average'],
-        #          exports[name]['stdev'],
-        #          exports[name]['range'],
-        #          exports[name]['quantiles']]
-        #     )
+        # write PSD data
+        i = 0
+        for trial in exports:
+            row = [targetness[i]]
+            for idx in range(interval_len):
+                row.append(exports[trial][idx])
+            i += 1
+                
+            
+            writer.writerow(row)
 
 def separate_trials(data, labels):
     """Separate Trials.
@@ -206,6 +203,57 @@ def separate_trials(data, labels):
     Given data [np.array] and labels [0, 1], we want to separate 0, 1 trials and return the data.
     """
     pass
+
+def determine_export_bins(gamma_range, interval):
+    """Determine export bins.
+    
+    assumes gamma range value 1 less than 2.
+    """
+    # determine the range of our two values 
+    diff = abs(gamma_range[0] - gamma_range[1])
+
+    intervals = []
+
+    # start with the smallest number and add interval to it
+    j = gamma_range[0]
+    for _ in range( int(diff / interval)):
+        intervals.append([j, j + interval])
+        j += interval
+
+    return intervals
+
+
+def generate_interval_trials(trials, interval, intervals, fs, trial_length):
+    """Generate Interval Trials.
+    
+    Using the trialed data from the trial reshaper, break the data into interval for export
+    """
+    channel_index = 14
+    export = {}
+
+    # convert interval to ms and calculate samples
+    samples_per_interval = int((interval) * fs /2 )
+    i = 0
+    # loop the channels
+    for trial in trials[channel_index]:
+        j = 0
+        k = samples_per_interval
+        z = 0
+        export[i] = {}
+        for _ in intervals:
+            # export[i][z] = trial[j:k]
+            export[i][z] = calculate_fft(trial[j:k], fs, interval)
+
+            j = k
+            k += samples_per_interval
+            z += 1
+
+        i += 1
+
+    return export
+
+        
+
 
 if __name__ == '__main__':
     import argparse
@@ -217,16 +265,18 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
     parser.add_argument('-d', '--datafolder', required=True)
-    parser.add_argument('-pre', '--prestim', default=None, type=int)
-    parser.add_argument('-post', '--poststim', default=TRIAL_LENGTH, type=int)
+    parser.add_argument('-pre', '--prestim', default=-700, type=int)
+    parser.add_argument('-post', '--poststim', default=700, type=int)
+    parser.add_argument('-int', '--interval', default=100, type=int)
     args = parser.parse_args()
 
+    # extract relevant args
     data_folder = args.datafolder
     prestim = args.prestim
     poststim = args.poststim
+    interval = args.interval
 
-    # interval = 100
-    # pre_stim_gamma = [-200, 500]
+    intervals = determine_export_bins([prestim, poststim], interval)
 
     raw_data_path = '{}/raw_data.csv'.format(data_folder)
     parameter_path = '{}/parameters.json'.format(data_folder)
@@ -259,10 +309,14 @@ if __name__ == '__main__':
         trial_length,
         parameters)
 
+
+    exports = generate_interval_trials(trials, interval, intervals, fs, trial_length)
+
     # Do your analyses or uncomment next line to use debugger here and see what is returned.
-    import pdb;pdb.set_trace()
 
-    # calculate_fft(trials[0][1], fs, trial_length)
+    export_data_to_csv(exports, intervals, targetness)
 
-    logging.info('Complete! \n')
+    # # calculate_fft(trials[0][1], fs, trial_length)
+
+    # logging.info('Complete! \n')
 

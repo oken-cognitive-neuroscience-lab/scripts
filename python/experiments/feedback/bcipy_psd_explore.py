@@ -198,7 +198,8 @@ def create_sequence_exports(
                 window_length=TRIAL_LENGTH,
                 method=PSD_TYPE.WELCH,
                 plot=False,
-                relative=relative))
+                relative=relative,
+                relative_sub_band=[FILTER_HP, FILTER_LP]))
 
     # calculate the fields of interest for export
     for name, band in PSD_TO_DETERMINE:
