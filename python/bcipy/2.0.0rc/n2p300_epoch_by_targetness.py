@@ -2,11 +2,11 @@
 Analysis Notes
 --------------
 
-This script processes a folder of session data, looping over each session and processing the data into an average of epochs by poisition accross subjects and trials.
+This script processes a folder of session data, looping over each session and processing the data into an average of epochs by position across subjects and trials.
 
 ***Done outside of this script***
 --------------------------------
-Filtered: Yes (default) 1-20 Hz, 2nd order butterworth, 60 Hz notch filter
+Filtered: Yes (default) 1-20 Hz, 2nd order buttersworth, 60 Hz notch filter
 Artifact Rejection: Semi-automatic (no more than 50% bad epochs per condition)
 
 ***Done in this script***
@@ -30,12 +30,12 @@ from bcipy.helpers.triggers import TriggerType, trigger_decoder
 ARTIFACT_LABELLED_FILENAME = 'artifacts_raw.fif'
 
 
-def epoch_prelabelled_data(
+def epoch_prelabeled_data(
         path: Path,
         baseline: Tuple[float]=(-0.2, 0.0),
         percent_bad: float=50.0,
         channel_list=None) -> Tuple[mne.Epochs, list, mne.io.RawArray]:
-    """Epoch prelabelled data.
+    """Epoch prelabeled data.
     
     Parameters
     ----------
@@ -158,7 +158,7 @@ if __name__ == "__main__":
         if session.is_dir():
             print(f'Processing {session}')
             try: 
-                resp = epoch_prelabelled_data(session, channel_list=channel_list)
+                resp = epoch_prelabeled_data(session, channel_list=channel_list)
                 if resp:
                     epochs, positions, _ = resp
                     all_epochs.append(epochs)
