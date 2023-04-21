@@ -1,1 +1,2 @@
 bcipy==2.0.0rc3
+BCI2kReader==0.32.dev0 # only needed for the gamma analysis
