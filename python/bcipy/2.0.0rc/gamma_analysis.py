@@ -8,14 +8,18 @@ import numpy as np
 from typing import List, Tuple
 
 from bcipy.helpers.load import load_experimental_data
+from scipy.signal import hilbert
 
-
-from mne.io import read_raw_bdf
 from BCI2kReader import BCI2kReader as bci2k
 
 from bcipy.signal.process.decomposition.psd import (
     power_spectral_density, PSD_TYPE)
 from bcipy.signal.process.decomposition import continuous_wavelet_transform
+from bcipy.signal.process.filter import Notch
+
+import mne
+from mne.io import read_raw_bdf
+CONDITIONS = ['BL1', 'BL2', 'BL3', 'BL4', 'WM1', 'WM2', 'WM3', 'WM4']
 
 
 def load_data_dat(session: str) -> Tuple[np.ndarray, List[float], int]:
@@ -81,7 +85,10 @@ def load_data_bdf(session: str) -> Tuple[np.ndarray, List[float], int]:
 
 
 def reshape_data_into_trials(data: np.ndarray, labels: List[float], post_stim: float, pre_stim: float, interval: int, fs: int) -> np.ndarray:
-    """Reshape data into trials. Channels X Trials X Samples"""
+    """Reshape data into trials. 
+    
+    Returns:
+        data Channels X Trials X Samples or Channels X Trials X Intervals X Samples (if interval < post_stim)"""
     # turn into samples
     pre_stim = int(pre_stim / 1000 * fs)
     post_stim = int(post_stim / 1000 * fs)
@@ -94,6 +101,14 @@ def reshape_data_into_trials(data: np.ndarray, labels: List[float], post_stim: f
     intervals_in_window = int(window_length / interval)
 
     trials = []
+
+    if intervals_in_window == 1:
+        for label in labels:
+            start = label - pre_stim
+            stop = label + post_stim
+            trials.append(data[:, start:stop])
+        trials = np.array(trials)
+        return trials
 
     # correct labels to start and stop give the prestimulus and poststimulus time
     for label in labels:
@@ -186,6 +201,111 @@ def calculate_gamma_cwt(data: np.ndarray, fs: int, freq_range=(50, 80)) -> np.nd
 
     return np.array(gamma)
 
+def preprocess_data(data: np.ndarray, labels: List[float], fs:int, notch_filter: int = 60):
+    """Preprocess data.
+
+    Parameters:
+        data - data from the session (channels X trials x samples)
+        labels - labels from the session (onset, duration, description)
+        fs - sampling frequency
+
+    Returns:
+        data - preprocessed data (channels X trials X samples)
+    """
+    # get mean voltage for all channels and trials
+    mean_voltage = np.mean(data, axis=2)
+
+    # correct for mean voltage across channels and trials
+    for channel in data:
+        for trial in channel:
+            trial -= mean_voltage
+            # filter data with a notch filter
+            trial, _ = Notch(fs, notch_filter)(trial, fs)
+    
+    return data
+
+def hilbert_transform(data: np.ndarray, freq_range: Tuple[int, int], fs: int) -> np.ndarray:
+    """Calculate Hilbert transform.
+
+    Parameters:
+        data - trial data (samples)
+        fs - sampling frequency
+        freq_range - range of frequencies to calculate gamma for
+
+    Returns:
+        gamma - gamma power for each trial (channels X trials)
+    """
+
+    # calculate analytic signal
+    analytic_signal = hilbert(data)
+
+
+
+def calculate_gamma_hilbert(data: np.ndarray, fs: int, freq_range: Tuple[int, int]) -> np.ndarray:
+    """Calculate Hilbert transform.
+
+    Parameters:
+        data - data from the session (channels X trials X samples)
+        fs - sampling frequency
+        freq_range - range of frequencies to calculate gamma for
+
+    Returns:
+        gamma - gamma power for each trial (channels X trials)
+    """
+    # calculate gamma for each channel
+    gamma = []
+    for channel in data: # data is in the shape of channels X trials X samples
+        sub_gamma = []
+        for trial in channel: # trial is in the shape of trials X samples
+            sub_gamma.append(hilbert_transform(trial, freq_range, fs))
+        gamma.append(sub_gamma)
+
+    return np.array(gamma)
+
+def load_data_mne(data: np.ndarray, labels: List[float], trial_length: float, fs: int, notch_filter=None, plot=False) -> mne.io.RawArray:
+    """Load data into mne.RawArray.
+
+    Parameters:
+        data - data from the session (channels X trials x samples)
+        labels - labels from the session (onset, duration, description)
+        trial_length - length of each trial in seconds
+        fs - sampling frequency
+
+    Returns:
+        raw - mne.RawArray
+    """
+    # create mne.RawArray
+    channels = [f'ch{i}' for i in range(len(data))]
+    channel_types = ['ecog' for _ in range(len(data))]
+
+    info = mne.create_info(channels, fs, channel_types)
+    raw = mne.io.RawArray(data, info)
+
+    # add annotations
+    trigger_timing = [label / fs for label in labels]
+    trigger_length = [trial_length for _ in labels]
+    # map the labels onto conditions. There can be more labels than conditions, repeat the conditions
+    trigger_description = [CONDITIONS[i % len(CONDITIONS)] for i in range(len(labels))]
+    breakpoint()
+    # for label in labels:
+    annotations = mne.Annotations(trigger_timing, trigger_length, trigger_description)
+    raw.set_annotations(annotations)
+
+    if plot:
+        raw.plot(lowpass=90, highpass=20, block=True)
+    
+    raw.drop_channels(raw.info['bads'])
+
+    if notch_filter:
+        raw.notch_filter(notch_filter, trans_bandwidth=3)
+
+
+    return raw
+
+def create_epochs(mne_data: mne.io.RawArray, prestim, poststim) -> mne.Epochs:
+    events_from_annot, _ = mne.events_from_annotations(mne_data)
+    return mne.Epochs(mne_data, events_from_annot, tmin=-prestim, tmax=poststim, preload=True)
+    
 
 if __name__ == '__main__':
     """Cli for gamma analysis.
@@ -213,9 +333,9 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
     parser.add_argument('-s', '--session', required=False, default=None, type=str)
-    parser.add_argument('-pre', '--prestim', default=0, type=int)
-    parser.add_argument('-post', '--poststim', default=500, type=int)
-    parser.add_argument('-int', '--interval', default=500, type=int)
+    parser.add_argument('-pre', '--prestim', default=100, type=int)
+    parser.add_argument('-post', '--poststim', default=4000, type=int)
+    parser.add_argument('-int', '--interval', default=4000, type=int)
     # parser.add_argument('-r', '--relative', default=False, type=bool)
     parser.add_argument('-f', '--freq_range', default=(50, 80), type=tuple)
 
@@ -232,6 +352,14 @@ if __name__ == '__main__':
 
     # bci_data, bci_labels, bci_fs = load_data_bdf(session) # this loads the data from the bdf file but the labels are not correct
     data, labels, fs = load_data_dat(session)
+    # load data into mne
+    mne_data = load_data_mne(data, labels, poststim / 1000, fs, notch_filter=60, plot=True)
+    # create epochs
+    epochs = create_epochs(mne_data, prestim / 1000 , poststim / 1000) # has to has some baseline
+    hilbert_data = epochs.copy().filter(30, 90).resample(fs / 2).apply_hilbert(envelope=True)
+    hilbert_data.info
+    breakpoint()
+    # data, labels, fs = preprocess_data(data, labels, fs)
     trials = reshape_data_into_trials(data, labels, poststim, prestim, interval, fs) # Channels X Trials X Intervals X Samples
     # breakpoint()
     # calculate gamma for each trial
