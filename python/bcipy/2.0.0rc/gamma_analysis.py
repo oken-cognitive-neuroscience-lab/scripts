@@ -19,10 +19,11 @@ from bcipy.signal.process.filter import Notch
 
 import mne
 from mne.io import read_raw_bdf
-CONDITIONS = ['BL1', 'BL2', 'BL3', 'BL4', 'WM1', 'WM2', 'WM3', 'WM4']
+from mne.viz import plot_compare_evokeds
+CONDITIONS = ['Letter1', 'Letter2', 'Letter3', 'Letter4', 'DigitSpanWM1', 'DigitSpanWM2', 'DigitSpanWM3', 'DigitSpanWM4']
 
 
-def load_data_dat(session: str) -> Tuple[np.ndarray, List[float], int]:
+def load_data_dat(session: str) -> Tuple[np.ndarray, List[float], int, List[str]]:
     """Load data from a dat file.
 
     Parameters:
@@ -54,7 +55,7 @@ def load_data_dat(session: str) -> Tuple[np.ndarray, List[float], int]:
         elif s == 0.0 and duration:
             duration = False
         
-    return raw.signals, labels, raw.samplingrate
+    return raw.signals, labels, raw.samplingrate, raw.parameters['ChannelNames']
 
 def load_data_bdf(session: str) -> Tuple[np.ndarray, List[float], int]:
     """Load data from a bdf file.
@@ -90,9 +91,9 @@ def reshape_data_into_trials(data: np.ndarray, labels: List[float], post_stim: f
     Returns:
         data Channels X Trials X Samples or Channels X Trials X Intervals X Samples (if interval < post_stim)"""
     # turn into samples
-    pre_stim = int(pre_stim / 1000 * fs)
-    post_stim = int(post_stim / 1000 * fs)
-    interval = int(interval / 1000 * fs)
+    pre_stim = int(pre_stim * fs)
+    post_stim = int(post_stim * fs)
+    interval = int(interval * fs)
 
     # calculate the number of intervals in the window and window length
     window_length = pre_stim + post_stim
@@ -262,7 +263,14 @@ def calculate_gamma_hilbert(data: np.ndarray, fs: int, freq_range: Tuple[int, in
 
     return np.array(gamma)
 
-def load_data_mne(data: np.ndarray, labels: List[float], trial_length: float, fs: int, notch_filter=None, plot=False) -> mne.io.RawArray:
+def load_data_mne(
+        data: np.ndarray,
+        labels: List[float],
+        trial_length: float,
+        fs: int,
+        notch_filter=None,
+        plot=False,
+        channels=None) -> mne.io.RawArray:
     """Load data into mne.RawArray.
 
     Parameters:
@@ -270,34 +278,39 @@ def load_data_mne(data: np.ndarray, labels: List[float], trial_length: float, fs
         labels - labels from the session (onset, duration, description)
         trial_length - length of each trial in seconds
         fs - sampling frequency
+        notch_filter - notch filter frequency
+        plot - plot the data
+        channel_names - names of the channels
 
     Returns:
         raw - mne.RawArray
     """
     # create mne.RawArray
-    channels = [f'ch{i}' for i in range(len(data))]
+    if channels is None:
+        channels = [f'ch{i}' for i in range(len(data))]
     channel_types = ['ecog' for _ in range(len(data))]
+    assert len(channels) == len(channel_types), 'Number of channels and channel types must be equal'
 
     info = mne.create_info(channels, fs, channel_types)
     raw = mne.io.RawArray(data, info)
+    raw.apply_function(lambda x: x * 1e-6) # convert to volts
 
     # add annotations
     trigger_timing = [label / fs for label in labels]
     trigger_length = [trial_length for _ in labels]
     # map the labels onto conditions. There can be more labels than conditions, repeat the conditions
     trigger_description = [CONDITIONS[i % len(CONDITIONS)] for i in range(len(labels))]
-    breakpoint()
     # for label in labels:
     annotations = mne.Annotations(trigger_timing, trigger_length, trigger_description)
     raw.set_annotations(annotations)
+
+    if notch_filter:
+        raw.notch_filter(notch_filter, trans_bandwidth=3)
 
     if plot:
         raw.plot(lowpass=90, highpass=20, block=True)
     
     raw.drop_channels(raw.info['bads'])
-
-    if notch_filter:
-        raw.notch_filter(notch_filter, trans_bandwidth=3)
 
 
     return raw
@@ -351,23 +364,89 @@ if __name__ == '__main__':
     logging.info(f'\nAnalysis Parameters: \nPrestimulus: {prestim} \nPoststimulus: {poststim} \nInterval: {interval} \n')
 
     # bci_data, bci_labels, bci_fs = load_data_bdf(session) # this loads the data from the bdf file but the labels are not correct
-    data, labels, fs = load_data_dat(session)
+    data, labels, fs, channel_names = load_data_dat(session)
+    poststim = poststim / 1000
+    prestim = prestim / 1000
+    interval = interval / 1000
     # load data into mne
-    mne_data = load_data_mne(data, labels, poststim / 1000, fs, notch_filter=60, plot=True)
+
+    # remove the last three labels *HACK for p01*
+    labels = labels[:-3]
+    mne_data = load_data_mne(data, labels, poststim, fs, notch_filter=60, plot=True, channels=channel_names)
+    # REmove bad epochs
     # create epochs
-    epochs = create_epochs(mne_data, prestim / 1000 , poststim / 1000) # has to has some baseline
-    hilbert_data = epochs.copy().filter(30, 90).resample(fs / 2).apply_hilbert(envelope=True)
+    epochs = create_epochs(mne_data, prestim, poststim) # has to has some baseline
+
+    # # GET the average per for each 4 second epoch
+    # for epoch in epochs:
+    #     # get the average for each epoch across the interval
+    #     average_per_epoch = epoch.average()
+
+
+    # # # # find the mean voltage of all the epochs. 
+    # average_epochs = epochs.average()
+    # # # # subtract the mean voltage from each epoch
+    # epochs = epochs.copy().subtract_evoked(average_epochs)
+
+
+    filtered_epochs = epochs.copy().filter(20, 90)
+    bs1_ep = filtered_epochs['1'].average()
+    bs2_ep = filtered_epochs['2'].average()
+    bs3_ep = filtered_epochs['3'].average()
+    bs4_ep = filtered_epochs['4'].average()
+    wm1_ep = filtered_epochs['5'].average()
+    wm2_ep = filtered_epochs['6'].average()
+    wm3_ep = filtered_epochs['7'].average()
+    wm4_ep = filtered_epochs['8'].average()
+    # plot_compare_evokeds([bs1_ep, wm1_ep], picks='ecog', colors=['r', 'b'], linestyles=['dashed', 'solid'], show=True, combine='median')
+    # plot_compare_evokeds([bs2_ep, wm2_ep], picks='ecog', colors=['r', 'b'], linestyles=['dashed', 'solid'], show=True, combine='median')
+    # plot_compare_evokeds([bs3_ep, wm3_ep], picks='ecog', colors=['r', 'b'], linestyles=['dashed', 'solid'], show=True, combine='median')
+    # plot_compare_evokeds([bs4_ep, wm4_ep], picks='ecog', colors=['r', 'b'], linestyles=['dashed', 'solid'], show=True, combine='median')
+
+    
+    hilbert_data = epochs.copy().filter(15, 95).apply_hilbert(envelope=False) # 1Hz amp between 20-90Hz
     hilbert_data.info
+
     breakpoint()
-    # data, labels, fs = preprocess_data(data, labels, fs)
-    trials = reshape_data_into_trials(data, labels, poststim, prestim, interval, fs) # Channels X Trials X Intervals X Samples
+
+    # amplitude
+    bs1 = hilbert_data['1'].apply_function(np.abs).average()
+    bs2 = hilbert_data['2'].apply_function(np.abs).average()
+    bs3 = hilbert_data['3'].apply_function(np.abs).average()
+    bs4 = hilbert_data['4'].apply_function(np.abs).average()
+    wm1 = hilbert_data['5'].apply_function(np.abs).average()
+    wm2 = hilbert_data['6'].apply_function(np.abs).average()
+    wm3 = hilbert_data['7'].apply_function(np.abs).average()
+    wm4 = hilbert_data['8'].apply_function(np.abs).average()
+
+    # phase
+    # bs1 = hilbert_data['1'].apply_function(np.angle).average()
+    # bs2 = hilbert_data['2'].apply_function(np.angle).average()
+    # bs3 = hilbert_data['3'].apply_function(np.angle).average()
+    # bs4 = hilbert_data['4'].apply_function(np.angle).average()
+    # wm1 = hilbert_data['5'].apply_function(np.angle).average()
+    # wm2 = hilbert_data['6'].apply_function(np.angle).average()
+    # wm3 = hilbert_data['7'].apply_function(np.angle).average()
+    # wm4 = hilbert_data['8'].apply_function(np.angle).average()
+
+
+    # plot_compare_evokeds([bs1, bs2, bs3, bs4, wm1, wm2, wm3, wm4], picks='ecog', colors=['r', 'r', 'r', 'r', 'b', 'b', 'b', 'b'], linestyles=['dashed', 'dashed', 'solid', 'dashed', 'dashed', 'dashed', 'solid', 'dashed'], show=True)
+    # plot_compare_evokeds([bs1, wm1], picks='ecog', colors=['r', 'b'], linestyles=['dashed', 'solid'], show=True, combine='median')
+    # plot_compare_evokeds([bs2, wm2], picks='ecog', colors=['r', 'b'], linestyles=['dashed', 'solid'], show=True, combine='median')
+    # plot_compare_evokeds([bs3, wm3], picks='ecog', colors=['r', 'b'], linestyles=['dashed', 'solid'], show=True, combine='median')
+    # plot_compare_evokeds([bs4, wm4], picks='ecog', colors=['r', 'b'], linestyles=['dashed', 'solid'], show=True, combine='median')
+
+
     # breakpoint()
-    # calculate gamma for each trial
-    gamma = calculate_gamma(trials, fs, interval, freq_range=freq_range, relative=False)
-    # convert to trials, channels, samples
-    # breakpoint()
-    # trials = np.swapaxes(trials, 0, 1)
-    # gamma_cwt = calculate_gamma_cwt(trials, fs, interval, freq_range=freq_range)
-    # print(gamma_cwt)
-    print(gamma)
+    # # data, labels, fs = preprocess_data(data, labels, fs)
+    # trials = reshape_data_into_trials(data, labels, poststim, prestim, interval, fs) # Channels X Trials X Intervals X Samples
+    # # breakpoint()
+    # # calculate gamma for each trial
+    # gamma = calculate_gamma(trials, fs, interval, freq_range=freq_range, relative=False)
+    # # convert to trials, channels, samples
+    # # breakpoint()
+    # # trials = np.swapaxes(trials, 0, 1)
+    # # gamma_cwt = calculate_gamma_cwt(trials, fs, interval, freq_range=freq_range)
+    # # print(gamma_cwt)
+    # print(gamma)
 
