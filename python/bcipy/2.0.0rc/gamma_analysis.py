@@ -5,7 +5,7 @@ import logging
 import argparse
 import numpy as np
 
-from typing import List, Tuple
+from typing import List, Tuple, Dict
 
 from bcipy.helpers.load import load_experimental_data
 from scipy.signal import hilbert
@@ -54,6 +54,11 @@ def load_data_dat(session: str) -> Tuple[np.ndarray, List[float], int, List[str]
             duration = True
         elif s == 0.0 and duration:
             duration = False
+
+    # print number of channels
+    print(f'Number of channels: {raw.signals.shape[0]}')
+    # print recording length in seconds
+    print(f'Recording length: {raw.signals.shape[1] / raw.samplingrate} seconds')
         
     return raw.signals, labels, raw.samplingrate, raw.parameters['ChannelNames']
 
@@ -318,6 +323,59 @@ def load_data_mne(
 def create_epochs(mne_data: mne.io.RawArray, prestim, poststim) -> mne.Epochs:
     events_from_annot, _ = mne.events_from_annotations(mne_data)
     return mne.Epochs(mne_data, events_from_annot, tmin=-prestim, tmax=poststim, preload=True)
+
+def hilbert_data_in_frequency_range_by_steps(epochs: mne.Epochs, freq_range: Tuple[int, int], step: int = 1) -> Dict[int, mne.Epochs]:
+    """Calculate Hilbert transform for a given frequency range by steps.
+    
+    Parameters:
+        epochs - mne.Epochs
+        freq_range - range of frequencies to calculate gamma for
+        step - step size for frequency range
+    
+    Returns:
+        hilbert_bins - dictionary of hilbert transform (value; mne.Epochs: shape ) for each frequency (key) in the range
+    """
+    # calculate gamma for each channel
+    hilbert_bins = {}
+    for freq in range(freq_range[0], freq_range[1], step):
+        # other options for fir_window: 'hamming', 'blackman', 'hann'
+        padding = 1 # TODO - make this a parameter or find lowest value that works
+        data = epochs.filter(l_freq=freq - padding, h_freq=freq + padding).apply_hilbert(picks='ecog', envelope=True)
+        hilbert_bins[freq] = data.apply_function(np.abs)
+
+    return hilbert_bins
+
+
+def z_score_hilbert_data(hilbert_data) -> Dict[int, np.ndarray]:
+    """Z-score hilbert data.
+
+    Parameters:
+        hilbert_data - hilbert data (value; mne.Epochs) for each frequency (key) in the range
+
+    Returns:
+        z_scored_hilbert_data - z-scored hilbert data
+    """
+    # loop over each frequency, find the mean and std for each channel, then z-score the data
+    z_scored_hilbert_data = {}
+    hilbert_data = hilbert_data.copy()
+    for freq, data in hilbert_data.items():
+        # average for each channel over the samples per trial
+        for i, trial in enumerate(data):
+            channel_mean = np.mean(trial, axis=1)
+            channel_std = np.std(trial, axis=1)
+            # z-score the data
+            hilbert_data[freq] = (trial - channel_mean[:, np.newaxis]) / channel_std[:, np.newaxis]
+
+    
+    return hilbert_data
+    
+    # return z_scored_hilbert_data
+
+    # z_scored_hilbert_data = {}
+    # for freq, data in hilbert_data.items():
+    #     z_scored_hilbert_data[freq] = mne.baseline.rescale(data.get_data(), data.times, baseline=(-0.5, -0.1), mode='zscore')
+
+    # return z_scored_hilbert_data
     
 
 if __name__ == '__main__':
@@ -350,7 +408,7 @@ if __name__ == '__main__':
     parser.add_argument('-post', '--poststim', default=4000, type=int)
     parser.add_argument('-int', '--interval', default=4000, type=int)
     # parser.add_argument('-r', '--relative', default=False, type=bool)
-    parser.add_argument('-f', '--freq_range', default=(50, 80), type=tuple)
+    parser.add_argument('-f', '--freq_range', default=(30, 150), type=tuple)
 
     args = parser.parse_args()
     interval = args.interval
@@ -374,50 +432,45 @@ if __name__ == '__main__':
     labels = labels[:-3]
     mne_data = load_data_mne(data, labels, poststim, fs, notch_filter=60, plot=True, channels=channel_names)
     # REmove bad epochs
-    # create epochs
-    epochs = create_epochs(mne_data, prestim, poststim) # has to has some baseline
+    # create epochs for each trial shape (epochs, channels, samples)
+    epochs = create_epochs(mne_data, prestim, poststim) # has to has some baseline we use 100 ms
 
-    # # GET the average per for each 4 second epoch
-    # for epoch in epochs:
-    #     # get the average for each epoch across the interval
-    #     average_per_epoch = epoch.average()
-
-
-    # # # # find the mean voltage of all the epochs. 
-    # average_epochs = epochs.average()
-    # # # # subtract the mean voltage from each epoch
-    # epochs = epochs.copy().subtract_evoked(average_epochs)
-
-
-    filtered_epochs = epochs.copy().filter(20, 90)
-    bs1_ep = filtered_epochs['1'].average()
-    bs2_ep = filtered_epochs['2'].average()
-    bs3_ep = filtered_epochs['3'].average()
-    bs4_ep = filtered_epochs['4'].average()
-    wm1_ep = filtered_epochs['5'].average()
-    wm2_ep = filtered_epochs['6'].average()
-    wm3_ep = filtered_epochs['7'].average()
-    wm4_ep = filtered_epochs['8'].average()
-    # plot_compare_evokeds([bs1_ep, wm1_ep], picks='ecog', colors=['r', 'b'], linestyles=['dashed', 'solid'], show=True, combine='median')
-    # plot_compare_evokeds([bs2_ep, wm2_ep], picks='ecog', colors=['r', 'b'], linestyles=['dashed', 'solid'], show=True, combine='median')
-    # plot_compare_evokeds([bs3_ep, wm3_ep], picks='ecog', colors=['r', 'b'], linestyles=['dashed', 'solid'], show=True, combine='median')
-    # plot_compare_evokeds([bs4_ep, wm4_ep], picks='ecog', colors=['r', 'b'], linestyles=['dashed', 'solid'], show=True, combine='median')
+    # filtered_epochs = epochs.copy().filter(20, 90)
+    # bs1_ep = filtered_epochs['1'].average()
+    # bs2_ep = filtered_epochs['2'].average()
+    # bs3_ep = filtered_epochs['3'].average()
+    # bs4_ep = filtered_epochs['4'].average()
+    # wm1_ep = filtered_epochs['5'].average()
+    # wm2_ep = filtered_epochs['6'].average()
+    # wm3_ep = filtered_epochs['7'].average()
+    # wm4_ep = filtered_epochs['8'].average()
+    # # plot_compare_evokeds([bs1_ep, wm1_ep], picks='ecog', colors=['r', 'b'], linestyles=['dashed', 'solid'], show=True, combine='median')
+    # # plot_compare_evokeds([bs2_ep, wm2_ep], picks='ecog', colors=['r', 'b'], linestyles=['dashed', 'solid'], show=True, combine='median')
+    # # plot_compare_evokeds([bs3_ep, wm3_ep], picks='ecog', colors=['r', 'b'], linestyles=['dashed', 'solid'], show=True, combine='median')
+    # # plot_compare_evokeds([bs4_ep, wm4_ep], picks='ecog', colors=['r', 'b'], linestyles=['dashed', 'solid'], show=True, combine='median')
 
     
-    hilbert_data = epochs.copy().filter(15, 95).apply_hilbert(envelope=False) # 1Hz amp between 20-90Hz
-    hilbert_data.info
+    # hilbert_data = epochs.copy().filter(15, 95).apply_hilbert(envelope=False) # 1Hz amp between 30-150Hz 
+    # hilbert_data.info
+
+    #  create a function to loop over a filtering range in steps of 1Hz, and then calculate the abs of the hilbert transform
+    #  for each frequency.
+    hilbert_data = hilbert_data_in_frequency_range_by_steps(epochs, freq_range, step=1)
+
+    # create a function to loop over the hilbert data bins and calculate the Z-score for each frequency bin for each epoch for each channel
+    z_scored_hilbert_data = z_score_hilbert_data(hilbert_data)
 
     breakpoint()
 
     # amplitude
-    bs1 = hilbert_data['1'].apply_function(np.abs).average()
-    bs2 = hilbert_data['2'].apply_function(np.abs).average()
-    bs3 = hilbert_data['3'].apply_function(np.abs).average()
-    bs4 = hilbert_data['4'].apply_function(np.abs).average()
-    wm1 = hilbert_data['5'].apply_function(np.abs).average()
-    wm2 = hilbert_data['6'].apply_function(np.abs).average()
-    wm3 = hilbert_data['7'].apply_function(np.abs).average()
-    wm4 = hilbert_data['8'].apply_function(np.abs).average()
+    bs1 = hilbert_data[50]['1'].apply_function(np.abs).average()
+    bs2 = hilbert_data[50]['2'].apply_function(np.abs).average()
+    bs3 = hilbert_data[50]['3'].apply_function(np.abs).average()
+    bs4 = hilbert_data[50]['4'].apply_function(np.abs).average()
+    wm1 = hilbert_data[50]['5'].apply_function(np.abs).average()
+    wm2 = hilbert_data[50]['6'].apply_function(np.abs).average()
+    wm3 = hilbert_data[50]['7'].apply_function(np.abs).average()
+    wm4 = hilbert_data[50]['8'].apply_function(np.abs).average()
 
     # phase
     # bs1 = hilbert_data['1'].apply_function(np.angle).average()

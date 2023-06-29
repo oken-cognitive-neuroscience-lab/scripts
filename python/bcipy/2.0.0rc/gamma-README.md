@@ -46,6 +46,10 @@ I think there is something about the data shape that is wrong... I will need to 
 2. determine filtering pipeline
 3. determine decomposition pipeline (fft, cwt, etc.) and parameters (interval, etc.)
 
+#### 04/24/23
+
+- Working MNE implementation with the Hilbert. Need to narrow down processing approach and how to analyze the data... what else will be needed?
+
 #### P01
 
 * Location: L4x5 (grid) and Frontal (Get exact location from PDF/Dr. Oken)
