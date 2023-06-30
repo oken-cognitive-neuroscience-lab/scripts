@@ -14,12 +14,13 @@ from BCI2kReader import BCI2kReader as bci2k
 
 from bcipy.signal.process.decomposition.psd import (
     power_spectral_density, PSD_TYPE)
-from bcipy.signal.process.decomposition import continuous_wavelet_transform
+# from bcipy.signal.process.decomposition import continuous_wavelet_transform
 from bcipy.signal.process.filter import Notch
 
 import mne
 from mne.io import read_raw_bdf
 from mne.viz import plot_compare_evokeds
+from mne.filter import detrend
 CONDITIONS = ['Letter1', 'Letter2', 'Letter3', 'Letter4', 'DigitSpanWM1', 'DigitSpanWM2', 'DigitSpanWM3', 'DigitSpanWM4']
 
 
@@ -147,12 +148,12 @@ def calculate_fft(data, fs, trial_length, freq_range=(50, 80), relative=False):
                 plot=False,
                 relative=relative)
 
-def calculate_cwt(data, fs, freq_range=(50, 80)):
-    """Calculate CWT Gamma
-    Calculate the amount of gamma using CWT.
-    """
-    freq = abs((freq_range[1] + freq_range[0]) / 2)
-    return continuous_wavelet_transform(data, freq, fs)
+# def calculate_cwt(data, fs, freq_range=(50, 80)):
+#     """Calculate CWT Gamma
+#     Calculate the amount of gamma using CWT.
+#     """
+#     freq = abs((freq_range[1] + freq_range[0]) / 2)
+#     return continuous_wavelet_transform(data, freq, fs)
 
 
 def calculate_gamma(data: np.ndarray, fs: int, trial_length: int, freq_range=(50, 80), relative=False) -> np.ndarray:
@@ -181,31 +182,31 @@ def calculate_gamma(data: np.ndarray, fs: int, trial_length: int, freq_range=(50
 
     return np.array(gamma)
 
-def calculate_gamma_cwt(data: np.ndarray, fs: int, freq_range=(50, 80)) -> np.ndarray:
-    """Calculate gamma power for each trial using CWT.
+# def calculate_gamma_cwt(data: np.ndarray, fs: int, freq_range=(50, 80)) -> np.ndarray:
+#     """Calculate gamma power for each trial using CWT.
 
-    Parameters:
-        data - data from the session (trials X channels X interval X samples)
-        fs - sampling frequency
-        trial_length - length of each trial in samples
-        freq_range - range of frequencies to calculate gamma for
-        relative - calculate relative gamma
+#     Parameters:
+#         data - data from the session (trials X channels X interval X samples)
+#         fs - sampling frequency
+#         trial_length - length of each trial in samples
+#         freq_range - range of frequencies to calculate gamma for
+#         relative - calculate relative gamma
 
-    Returns:
-        gamma - gamma power for each trial (channels X trials)
-    """
-    # calculate gamma for each channel
-    gamma = []
-    for channel in data: # data is in the shape of channels X trials X intervals X samples
-        sub_gamma = []
-        for trial in channel: # trial is in the shape of trials X intervals X samples
-            sub_sub_gamma = []
-            for interval in trial:
-                sub_sub_gamma.append(calculate_cwt(interval, fs, freq_range))
-            sub_gamma.append(sub_sub_gamma)
-        gamma.append(sub_gamma)
+#     Returns:
+#         gamma - gamma power for each trial (channels X trials)
+#     """
+#     # calculate gamma for each channel
+#     gamma = []
+#     for channel in data: # data is in the shape of channels X trials X intervals X samples
+#         sub_gamma = []
+#         for trial in channel: # trial is in the shape of trials X intervals X samples
+#             sub_sub_gamma = []
+#             for interval in trial:
+#                 sub_sub_gamma.append(calculate_cwt(interval, fs, freq_range))
+#             sub_gamma.append(sub_sub_gamma)
+#         gamma.append(sub_gamma)
 
-    return np.array(gamma)
+#     return np.array(gamma)
 
 def preprocess_data(data: np.ndarray, labels: List[float], fs:int, notch_filter: int = 60):
     """Preprocess data.
@@ -321,29 +322,30 @@ def load_data_mne(
     return raw
 
 def create_epochs(mne_data: mne.io.RawArray, prestim, poststim) -> mne.Epochs:
+    # filter out the non delay periods (Letter3, DigitSpanWM3)
     events_from_annot, _ = mne.events_from_annotations(mne_data)
-    return mne.Epochs(mne_data, events_from_annot, tmin=-prestim, tmax=poststim, preload=True)
+    return mne.Epochs(mne_data, events_from_annot, tmin=-prestim, tmax=poststim, preload=True, )
 
-def hilbert_data_in_frequency_range_by_steps(epochs: mne.Epochs, freq_range: Tuple[int, int], step: int = 1) -> Dict[int, mne.Epochs]:
-    """Calculate Hilbert transform for a given frequency range by steps.
+# def hilbert_data_in_frequency_range_by_steps(epochs: mne.Epochs, freq_range: Tuple[int, int], step: int = 1) -> Dict[int, mne.Epochs]:
+#     """Calculate Hilbert transform for a given frequency range by steps.
     
-    Parameters:
-        epochs - mne.Epochs
-        freq_range - range of frequencies to calculate gamma for
-        step - step size for frequency range
+#     Parameters:
+#         epochs - mne.Epochs
+#         freq_range - range of frequencies to calculate gamma for
+#         step - step size for frequency range
     
-    Returns:
-        hilbert_bins - dictionary of hilbert transform (value; mne.Epochs: shape ) for each frequency (key) in the range
-    """
-    # calculate gamma for each channel
-    hilbert_bins = {}
-    for freq in range(freq_range[0], freq_range[1], step):
-        # other options for fir_window: 'hamming', 'blackman', 'hann'
-        padding = 1 # TODO - make this a parameter or find lowest value that works
-        data = epochs.filter(l_freq=freq - padding, h_freq=freq + padding).apply_hilbert(picks='ecog', envelope=True)
-        hilbert_bins[freq] = data.apply_function(np.abs)
+#     Returns:
+#         hilbert_bins - dictionary of hilbert transform (value; mne.Epochs: shape ) for each frequency (key) in the range
+#     """
+#     # calculate gamma for each channel
+#     hilbert_bins = {}
+#     for freq in range(freq_range[0], freq_range[1], step):
+#         # other options for fir_window: 'hamming', 'blackman', 'hann'
+#         padding = 1 # TODO - make this a parameter or find lowest value that works
+#         data = epochs.apply_hilbert(picks='ecog', envelope=True)
+#         hilbert_bins[freq] = data.apply_function(np.abs)
 
-    return hilbert_bins
+#     return hilbert_bins
 
 
 def z_score_hilbert_data(hilbert_data) -> Dict[int, np.ndarray]:
@@ -368,14 +370,16 @@ def z_score_hilbert_data(hilbert_data) -> Dict[int, np.ndarray]:
 
     
     return hilbert_data
-    
-    # return z_scored_hilbert_data
 
-    # z_scored_hilbert_data = {}
-    # for freq, data in hilbert_data.items():
-    #     z_scored_hilbert_data[freq] = mne.baseline.rescale(data.get_data(), data.times, baseline=(-0.5, -0.1), mode='zscore')
+def filter_by_bins(mne_data, freq_range):
+    """Filter the dataset by a single frequency bin (120 datasets)."""
+    binned_filtered_data = {}
+    for freq in range(freq_range[0], freq_range[1]): # 30 - 150 
+        cp_data = mne_data.copy()
+        # cp_detrended_data = detrend(cp_data, order=1)
+        binned_filtered_data[freq] = cp_data.filter(freq, freq + 1)
 
-    # return z_scored_hilbert_data
+    return binned_filtered_data
     
 
 if __name__ == '__main__':
@@ -394,6 +398,16 @@ if __name__ == '__main__':
     Example:
         python gamma_analysis.py -s "path/session/" -pre -700 -post 700 -int 100
 
+    TODO:
+
+    1. fix epoching to use the appropriate time (ex. seconds or samples depending on the data)
+    2. filter out unneeded trials (we want to look at the delay period; 3rd letter, 3rd digit span condition)
+    3. Add a linear detrend to the data (in the epoching step)
+    4. Interval the data
+    5. Apply z-score on the interval data (not the full trial after hilbert transform) #STOP here for now and schedule a new meeting
+    6. plot the data to reduce things (look at the paper Figure 2)
+    7. We are interested in how many SDs the z-scored wm trials are from the baseline trials
+
     """
     import argparse
     import logging
@@ -406,9 +420,10 @@ if __name__ == '__main__':
     parser.add_argument('-s', '--session', required=False, default=None, type=str)
     parser.add_argument('-pre', '--prestim', default=100, type=int)
     parser.add_argument('-post', '--poststim', default=4000, type=int)
+    # make sure the intervaling works for down to 50ms
     parser.add_argument('-int', '--interval', default=4000, type=int)
     # parser.add_argument('-r', '--relative', default=False, type=bool)
-    parser.add_argument('-f', '--freq_range', default=(30, 150), type=tuple)
+    parser.add_argument('-f', '--freq_range', default=(70, 80), type=tuple)
 
     args = parser.parse_args()
     interval = args.interval
@@ -423,6 +438,7 @@ if __name__ == '__main__':
 
     # bci_data, bci_labels, bci_fs = load_data_bdf(session) # this loads the data from the bdf file but the labels are not correct
     data, labels, fs, channel_names = load_data_dat(session)
+    # update intervals to seconds
     poststim = poststim / 1000
     prestim = prestim / 1000
     interval = interval / 1000
@@ -430,47 +446,50 @@ if __name__ == '__main__':
 
     # remove the last three labels *HACK for p01*
     labels = labels[:-3]
-    mne_data = load_data_mne(data, labels, poststim, fs, notch_filter=60, plot=True, channels=channel_names)
-    # REmove bad epochs
-    # create epochs for each trial shape (epochs, channels, samples)
-    epochs = create_epochs(mne_data, prestim, poststim) # has to has some baseline we use 100 ms
-
-    # filtered_epochs = epochs.copy().filter(20, 90)
-    # bs1_ep = filtered_epochs['1'].average()
-    # bs2_ep = filtered_epochs['2'].average()
-    # bs3_ep = filtered_epochs['3'].average()
-    # bs4_ep = filtered_epochs['4'].average()
-    # wm1_ep = filtered_epochs['5'].average()
-    # wm2_ep = filtered_epochs['6'].average()
-    # wm3_ep = filtered_epochs['7'].average()
-    # wm4_ep = filtered_epochs['8'].average()
-    # # plot_compare_evokeds([bs1_ep, wm1_ep], picks='ecog', colors=['r', 'b'], linestyles=['dashed', 'solid'], show=True, combine='median')
-    # # plot_compare_evokeds([bs2_ep, wm2_ep], picks='ecog', colors=['r', 'b'], linestyles=['dashed', 'solid'], show=True, combine='median')
-    # # plot_compare_evokeds([bs3_ep, wm3_ep], picks='ecog', colors=['r', 'b'], linestyles=['dashed', 'solid'], show=True, combine='median')
-    # # plot_compare_evokeds([bs4_ep, wm4_ep], picks='ecog', colors=['r', 'b'], linestyles=['dashed', 'solid'], show=True, combine='median')
-
+    mne_data = load_data_mne(data, labels, poststim, fs, notch_filter=60, plot=True, channels=channel_names) #TODO DC offset correction! 
     
-    # hilbert_data = epochs.copy().filter(15, 95).apply_hilbert(envelope=False) # 1Hz amp between 30-150Hz 
-    # hilbert_data.info
+    # filter the dataset by a single frequency bin (120 datasets)
+    binned_filtered_data = filter_by_bins(mne_data, freq_range)
 
-    #  create a function to loop over a filtering range in steps of 1Hz, and then calculate the abs of the hilbert transform
-    #  for each frequency.
-    hilbert_data = hilbert_data_in_frequency_range_by_steps(epochs, freq_range, step=1)
+    # create epochs for each trial shape (epochs, channels, samples)
+    binned_epochs = []
+    for bin_data in binned_filtered_data:
+        epoch_data = create_epochs(binned_filtered_data[bin_data], prestim, poststim)
+        # TODO detrend the data on the full trial epoch
+        binned_epochs.append(epoch_data)
 
-    # create a function to loop over the hilbert data bins and calculate the Z-score for each frequency bin for each epoch for each channel
-    z_scored_hilbert_data = z_score_hilbert_data(hilbert_data)
+    # TODO create the intervals for each epoch
+
+    # calculate hilbert transform for each frequency bin
+    hilbert_data = []
+    for bin_epochs in binned_epochs:
+        hilbert_data.append(bin_epochs.apply_hilbert(picks='ecog', envelope=True).apply_function(np.abs))
 
     breakpoint()
+    # z-score the hilbert data (IP for now) need to determine if this is actually by channel and how to represent the data
+    for tmp_hilbert in hilbert_data:
+        for i, trial in enumerate(tmp_hilbert):
+            new_channel = []
+            for channel in trial:
+                channel_mean = np.mean(channel)
+                channel_std = np.std(channel)
+                new_channel.append((channel - channel_mean) / channel_std)
+
+            tmp_hilbert[i] = np.array(new_channel)
+    
+
+    # create a function to loop over the hilbert data bins and calculate the Z-score for each frequency bin for each epoch for each channel
+    # z_scored_hilbert_data = z_score_hilbert_data(hilbert_data)
 
     # amplitude
-    bs1 = hilbert_data[50]['1'].apply_function(np.abs).average()
-    bs2 = hilbert_data[50]['2'].apply_function(np.abs).average()
-    bs3 = hilbert_data[50]['3'].apply_function(np.abs).average()
-    bs4 = hilbert_data[50]['4'].apply_function(np.abs).average()
-    wm1 = hilbert_data[50]['5'].apply_function(np.abs).average()
-    wm2 = hilbert_data[50]['6'].apply_function(np.abs).average()
-    wm3 = hilbert_data[50]['7'].apply_function(np.abs).average()
-    wm4 = hilbert_data[50]['8'].apply_function(np.abs).average()
+    # bs1 = hilbert_data[50]['1'].apply_function(np.abs).average()
+    # bs2 = hilbert_data[50]['2'].apply_function(np.abs).average()
+    # bs3 = hilbert_data[50]['3'].apply_function(np.abs).average()
+    # bs4 = hilbert_data[50]['4'].apply_function(np.abs).average()
+    # wm1 = hilbert_data[50]['5'].apply_function(np.abs).average()
+    # wm2 = hilbert_data[50]['6'].apply_function(np.abs).average()
+    # wm3 = hilbert_data[50]['7'].apply_function(np.abs).average()
+    # wm4 = hilbert_data[50]['8'].apply_function(np.abs).average()
 
     # phase
     # bs1 = hilbert_data['1'].apply_function(np.angle).average()
