@@ -54,3 +54,22 @@ I think there is something about the data shape that is wrong... I will need to 
 
 * Location: L4x5 (grid) and Frontal (Get exact location from PDF/Dr. Oken)
 * Only the first 8 tasks are valid, even though there are 10 and some change in the data. Recording was not stopped in time in the OR.
+
+#### 07/15/2023
+TODO:
+
+    1. fix epoching to use the appropriate time (ex. seconds or samples depending on the data)
+    2. filter out unneeded trials (we want to look at the delay period; 3rd letter, 3rd digit span condition)
+    3. Add a linear detrend to the data (in the epoching step) 
+        https://nbara.github.io/python-meegkit/auto_examples/example_detrend.html
+        https://mailman.science.ru.nl/pipermail/fieldtrip/2013-January/018909.html (a high pass filter will remove trends...)
+    4. Interval the data (TODO)
+    5. Apply z-score on the interval data (not the full trial after hilbert transform) #STOP here for now and schedule a new meeting
+    6. plot the data to reduce things (look at the paper Figure 2)
+    7. We are interested in how many SDs the z-scored wm trials are from the baseline trials
+    8. Notch filters at all the harmonics (60, 120, 180); not as interested in the surrounding frequencies....
+
+
+    Removing power line noise: https://www.sciencedirect.com/science/article/pii/S1053811919309474?via%3Dihub
+    iEEG-BIDS: https://www.nature.com/articles/s41597-019-0105-7 
+    EXAMPLE GAMMA PROCESSING: https://mne.tools/0.23/auto_tutorials/clinical/30_ecog.html 
